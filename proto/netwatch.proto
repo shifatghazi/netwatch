@@ -1,0 +1,96 @@
+// netwatch.proto
+// --------------
+// Defines the gRPC API surface for NetWatch.
+//
+// WHY GRPC AND PROTOBUF INSTEAD OF REST/JSON?
+//   1. Performance: Protobuf is binary — 3-10x smaller on the wire than JSON
+//      and faster to serialize/deserialize. Matters for high-frequency telemetry.
+//   2. Streaming: gRPC has native server-streaming (server pushes data to client
+//      as it arrives) — perfect for real-time alert feeds. REST requires polling
+//      or awkward SSE workarounds.
+//   3. Industry standard: Nokia NSP uses gRPC for its northbound API.
+//      Ciena MCP uses gRPC internally. Kubernetes control plane is all gRPC.
+//      Having gRPC on your resume signals you understand modern distributed
+//      systems design.
+//   4. Strong typing: The .proto file is the contract between services. Any
+//      breaking change is caught at compile time, not at runtime.
+//
+// HOW GRPC WORKS (for interview):
+//   1. You define your service and message types here in .proto syntax
+//   2. The protoc compiler generates client and server stub code in your
+//      target language (Python, C++, Go, Java, etc.)
+//   3. Your server implements the generated interface
+//   4. Clients call it as if it were a local function — the networking is
+//      handled transparently by the gRPC runtime
+
+syntax = "proto3";
+
+package netwatch;
+
+// ── Message types ─────────────────────────────────────────────────────────
+
+message Alert {
+  string timestamp       = 1;
+  string node_id         = 2;
+  string metric          = 3;
+  double observed_value  = 4;
+  double z_score         = 5;
+  string severity        = 6;   // "WARNING" | "MINOR" | "MAJOR" | "CRITICAL"
+  string description     = 7;
+}
+
+message TelemetrySnapshot {
+  string node_id          = 1;
+  string timestamp        = 2;
+  double latency_ms       = 3;
+  double packet_loss_pct  = 4;
+  double jitter_ms        = 5;
+  double link_util_pct    = 6;
+  double error_rate       = 7;
+}
+
+message GetAlertsRequest {
+  int32  limit     = 1;   // 0 = all
+  string node_id   = 2;   // "" = all nodes
+  string min_severity = 3; // filter by minimum severity
+}
+
+message GetAlertsResponse {
+  repeated Alert alerts = 1;
+  int32          total  = 2;
+}
+
+message StreamAlertsRequest {
+  string node_id      = 1;   // "" = all nodes
+  string min_severity = 2;
+}
+
+message GetNodesRequest {}
+
+message GetNodesResponse {
+  repeated string node_ids = 1;
+}
+
+message HealthRequest {}
+message HealthResponse {
+  bool   ok      = 1;
+  string message = 2;
+}
+
+// ── Service definition ────────────────────────────────────────────────────
+
+service NetWatchService {
+  // Unary RPC: Get recent alerts (like a REST GET endpoint)
+  rpc GetAlerts(GetAlertsRequest) returns (GetAlertsResponse);
+
+  // Server-streaming RPC: Subscribe to live alert feed.
+  // The server keeps the connection open and pushes new alerts as they arrive.
+  // This is the key differentiator vs REST — the client doesn't need to poll.
+  rpc StreamAlerts(StreamAlertsRequest) returns (stream Alert);
+
+  // Unary: Get list of known nodes
+  rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
+
+  // Health check (used by Kubernetes liveness probes, load balancers, etc.)
+  rpc HealthCheck(HealthRequest) returns (HealthResponse);
+}

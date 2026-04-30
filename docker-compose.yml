@@ -1,0 +1,107 @@
+# docker-compose.yml
+# -------------------
+# Runs all four components of NetWatch as isolated containers.
+#
+# WHY DOCKER?
+#   1. Reproducibility: anyone can run "docker compose up" and get the exact
+#      same environment, regardless of their host OS. No "works on my machine".
+#   2. Isolation: each process runs in its own container with its own filesystem
+#      and network namespace. A crash in one doesn't affect others.
+#   3. Industry standard: every production deployment at Nokia, Tesla, Ciena
+#      is containerized. Kubernetes (which you also have on your resume) manages
+#      fleets of these containers.
+#
+# SHARED VOLUME:
+#   All containers share /tmp/netwatch as a bind-mounted volume. This is how
+#   the simulator writes telemetry and alerts that the engine and API server
+#   can read. In production this would be a message queue (Kafka) or a
+#   time-series database (InfluxDB, Prometheus).
+#
+# SERVICE DEPENDENCY:
+#   "depends_on" ensures the engine starts before the API server. The simulator
+#   starts first so there's data ready when the engine comes up.
+
+version: "3.9"
+
+services:
+
+  # ── 1. Telemetry simulator ──────────────────────────────────────────────
+  simulator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: netwatch-simulator
+    command: python3 /app/scripts/telemetry_simulator.py
+    volumes:
+      - netwatch-data:/tmp/netwatch
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1   # ensures stdout is not buffered (important for logs)
+    restart: unless-stopped
+
+  # ── 2. C++ detection engine ─────────────────────────────────────────────
+  engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cpp
+    container_name: netwatch-engine
+    volumes:
+      - netwatch-data:/tmp/netwatch
+    depends_on:
+      - simulator
+    restart: unless-stopped
+
+  # ── 3. gRPC API server ───────────────────────────────────────────────────
+  grpc-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: netwatch-grpc
+    command: python3 /app/src/grpc_server.py
+    volumes:
+      - netwatch-data:/tmp/netwatch
+      - .:/app
+    ports:
+      - "50051:50051"
+    environment:
+      - GRPC_PORT=50051
+      - ALERTS_FILE=/tmp/netwatch/alerts.jsonl
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - engine
+    restart: unless-stopped
+
+  # ── 4. Dashboard REST API ────────────────────────────────────────────────
+  dashboard-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: netwatch-dashboard-api
+    command: python3 /app/src/dashboard_api.py
+    volumes:
+      - netwatch-data:/tmp/netwatch
+      - .:/app
+    ports:
+      - "8080:8080"
+    environment:
+      - DASHBOARD_PORT=8080
+      - ALERTS_FILE=/tmp/netwatch/alerts.jsonl
+      - TELEMETRY_FILE=/tmp/netwatch/telemetry.jsonl
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - engine
+    restart: unless-stopped
+
+  # ── 5. Grafana (optional but impressive) ─────────────────────────────────
+  # Uncomment to add a proper Grafana dashboard backed by the API
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   ports: ["3000:3000"]
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #     - ./grafana/provisioning:/etc/grafana/provisioning
+
+volumes:
+  netwatch-data:
+    driver: local
+  # grafana-data:

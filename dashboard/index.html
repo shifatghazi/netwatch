@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetWatch — Network Anomaly Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --border:    #30363d;
+    --text:      #e6edf3;
+    --muted:     #8b949e;
+    --critical:  #f85149;
+    --major:     #ff7b72;
+    --minor:     #e3b341;
+    --warning:   #3fb950;
+    --blue:      #58a6ff;
+    --green:     #3fb950;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; font-size: 13px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; color: var(--blue); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; padding: 16px 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; }
+  .stat-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; }
+  .stat-card.critical .value { color: var(--critical); }
+  .stat-card.major    .value { color: var(--major); }
+  .stat-card.minor    .value { color: var(--minor); }
+  .stat-card.total    .value { color: var(--blue); }
+
+  .main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 24px 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+  .panel-header { padding: 10px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+  .panel-body { padding: 12px; }
+
+  .chart-wrap { position: relative; height: 180px; }
+
+  .alerts-list { max-height: 380px; overflow-y: auto; }
+  .alert-row { display: grid; grid-template-columns: 70px 120px 130px 1fr auto; gap: 8px; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .alert-row:hover { background: rgba(255,255,255,0.03); }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+  .badge.CRITICAL { background: rgba(248,81,73,0.2); color: var(--critical); }
+  .badge.MAJOR    { background: rgba(255,123,114,0.2); color: var(--major); }
+  .badge.MINOR    { background: rgba(227,179,65,0.2); color: var(--minor); }
+  .badge.WARNING  { background: rgba(63,185,80,0.2); color: var(--warning); }
+
+  .node-id   { color: var(--blue); font-family: monospace; }
+  .metric    { color: var(--muted); }
+  .z-score   { color: var(--text); font-family: monospace; text-align: right; }
+  .ts        { color: var(--muted); font-size: 10px; }
+
+  .node-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .node-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .node-card .node-name { color: var(--blue); font-family: monospace; margin-bottom: 8px; font-size: 11px; }
+  .metric-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+  .metric-row .mk { color: var(--muted); font-size: 10px; }
+  .metric-row .mv { font-family: monospace; font-size: 11px; }
+  .mv.ok       { color: var(--green); }
+  .mv.warn     { color: var(--minor); }
+  .mv.critical { color: var(--critical); }
+
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 11px; cursor: pointer; }
+
+  .full-width { grid-column: 1 / -1; }
+  .two-col { grid-column: span 2; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <span class="status-dot" id="status-dot"></span>
+    <h1 style="display:inline">NetWatch</h1>
+    <span style="color:var(--muted); margin-left:8px; font-size:11px">real-time network anomaly detection engine</span>
+  </div>
+  <div style="color:var(--muted); font-size:11px" id="last-update">connecting...</div>
+</header>
+
+<div class="grid">
+  <div class="stat-card total">
+    <div class="label">Total alerts</div>
+    <div class="value" id="stat-total">—</div>
+  </div>
+  <div class="stat-card critical">
+    <div class="label">Critical</div>
+    <div class="value" id="stat-critical">—</div>
+  </div>
+  <div class="stat-card major">
+    <div class="label">Major</div>
+    <div class="value" id="stat-major">—</div>
+  </div>
+  <div class="stat-card minor">
+    <div class="label">Minor / warning</div>
+    <div class="value" id="stat-minor">—</div>
+  </div>
+</div>
+
+<div class="main">
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>Alert history</span>
+      <select id="sev-filter" onchange="refreshAlerts()">
+        <option value="">All severities</option>
+        <option value="WARNING">Warning+</option>
+        <option value="MINOR">Minor+</option>
+        <option value="MAJOR">Major+</option>
+        <option value="CRITICAL">Critical only</option>
+      </select>
+    </div>
+    <div class="panel-body" style="padding:0">
+      <div class="alert-row" style="background:rgba(255,255,255,0.04); font-size:10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:0.5px">
+        <span>Severity</span><span>Time</span><span>Node</span><span>Metric</span><span>Z-score</span>
+      </div>
+      <div class="alerts-list" id="alerts-list">
+        <div style="padding:20px; text-align:center; color:var(--muted)">Loading alerts...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><span>Alerts by metric</span></div>
+    <div class="panel-body">
+      <div class="chart-wrap"><canvas id="metric-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="panel two-col">
+    <div class="panel-header"><span>Node telemetry — latest snapshot</span></div>
+    <div class="panel-body">
+      <div class="node-grid" id="node-grid">
+        <div style="color:var(--muted)">Loading node data...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>Latency over time</span>
+      <select id="node-filter-latency" onchange="refreshCharts()">
+        <option value="">All nodes</option>
+      </select>
+    </div>
+    <div class="panel-body">
+      <div class="chart-wrap"><canvas id="latency-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><span>Alert severity distribution</span></div>
+    <div class="panel-body">
+      <div class="chart-wrap"><canvas id="sev-chart"></canvas></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = 'http://localhost:8080';
+const CHART_OPTS = { animation: false, responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+  scales: { x: { ticks: { color: '#8b949e', font:{size:10} }, grid: { color: '#21262d' } },
+            y: { ticks: { color: '#8b949e', font:{size:10} }, grid: { color: '#21262d' } } } };
+
+let latencyChart, sevChart, metricChart;
+
+function initCharts() {
+  latencyChart = new Chart(document.getElementById('latency-chart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{
+      label: 'Latency (ms)', data: [], borderColor: '#58a6ff',
+      backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0.3,
+      pointRadius: 0, borderWidth: 1.5
+    }]},
+    options: { ...CHART_OPTS, plugins: { ...CHART_OPTS.plugins } }
+  });
+
+  sevChart = new Chart(document.getElementById('sev-chart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Critical', 'Major', 'Minor', 'Warning'],
+      datasets: [{ data: [0,0,0,0],
+        backgroundColor: ['rgba(248,81,73,0.8)','rgba(255,123,114,0.8)','rgba(227,179,65,0.8)','rgba(63,185,80,0.8)'],
+        borderWidth: 0 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: { legend: { labels: { color:'#8b949e', font:{size:11} } } } }
+  });
+
+  metricChart = new Chart(document.getElementById('metric-chart'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Count', data: [], backgroundColor: 'rgba(88,166,255,0.6)', borderRadius: 4 }] },
+    options: { ...CHART_OPTS, plugins: { legend: { display: false } } }
+  });
+}
+
+async function fetchJSON(path) {
+  try {
+    const r = await fetch(API + path);
+    return await r.json();
+  } catch(e) {
+    document.getElementById('last-update').textContent = 'API unreachable';
+    document.getElementById('status-dot').style.background = '#f85149';
+    return null;
+  }
+}
+
+function fmtTime(ts) {
+  try { return new Date(ts).toLocaleTimeString(); } catch { return ts; }
+}
+
+function alertRow(a) {
+  return `<div class="alert-row">
+    <span><span class="badge ${a.severity}">${a.severity}</span></span>
+    <span class="ts">${fmtTime(a.timestamp)}</span>
+    <span class="node-id">${a.node_id}</span>
+    <span class="metric">${a.metric}</span>
+    <span class="z-score">${parseFloat(a.z_score).toFixed(2)}σ</span>
+  </div>`;
+}
+
+async function refreshAlerts() {
+  const sev = document.getElementById('sev-filter').value;
+  const url = `/api/alerts?limit=80${sev ? '&severity='+sev : ''}`;
+  const data = await fetchJSON(url);
+  if (!data) return;
+  const list = document.getElementById('alerts-list');
+  list.innerHTML = data.alerts.length
+    ? data.alerts.map(alertRow).join('')
+    : '<div style="padding:20px;text-align:center;color:var(--muted)">No alerts yet — waiting for anomalies</div>';
+}
+
+async function refreshStats() {
+  const data = await fetchJSON('/api/stats');
+  if (!data) return;
+
+  document.getElementById('stat-total').textContent    = data.total_alerts;
+  document.getElementById('stat-critical').textContent = data.by_severity['CRITICAL'] || 0;
+  document.getElementById('stat-major').textContent    = data.by_severity['MAJOR'] || 0;
+  const mw = (data.by_severity['MINOR']||0) + (data.by_severity['WARNING']||0);
+  document.getElementById('stat-minor').textContent    = mw;
+
+  // Severity doughnut
+  sevChart.data.datasets[0].data = [
+    data.by_severity['CRITICAL']||0, data.by_severity['MAJOR']||0,
+    data.by_severity['MINOR']||0,   data.by_severity['WARNING']||0
+  ];
+  sevChart.update();
+
+  // Metric bar chart
+  const metrics = Object.entries(data.by_metric).sort((a,b) => b[1]-a[1]);
+  metricChart.data.labels   = metrics.map(m => m[0].replace('_pct','').replace('_ms','').replace('_',' '));
+  metricChart.data.datasets[0].data = metrics.map(m => m[1]);
+  metricChart.update();
+
+  // Node cards
+  const nodeGrid = document.getElementById('node-grid');
+  nodeGrid.innerHTML = Object.entries(data.node_latest).map(([nid, m]) => {
+    const latClass = m.latency_ms > 50 ? 'critical' : m.latency_ms > 25 ? 'warn' : 'ok';
+    const lossClass = m.packet_loss_pct > 1 ? 'critical' : m.packet_loss_pct > 0.1 ? 'warn' : 'ok';
+    const utilClass = m.link_util_pct > 85 ? 'critical' : m.link_util_pct > 70 ? 'warn' : 'ok';
+    return `<div class="node-card">
+      <div class="node-name">${nid}</div>
+      <div class="metric-row"><span class="mk">Latency</span><span class="mv ${latClass}">${(m.latency_ms||0).toFixed(1)} ms</span></div>
+      <div class="metric-row"><span class="mk">Pkt loss</span><span class="mv ${lossClass}">${(m.packet_loss_pct||0).toFixed(3)}%</span></div>
+      <div class="metric-row"><span class="mk">Jitter</span><span class="mv ok">${(m.jitter_ms||0).toFixed(2)} ms</span></div>
+      <div class="metric-row"><span class="mk">Utilization</span><span class="mv ${utilClass}">${(m.link_util_pct||0).toFixed(1)}%</span></div>
+    </div>`;
+  }).join('') || '<div style="color:var(--muted)">Waiting for telemetry...</div>';
+
+  // Populate node filter dropdowns
+  const sel = document.getElementById('node-filter-latency');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All nodes</option>' +
+    data.nodes.map(n => `<option value="${n}"${n===current?' selected':''}>${n}</option>`).join('');
+}
+
+async function refreshCharts() {
+  const node = document.getElementById('node-filter-latency').value;
+  const url = `/api/telemetry?limit=60${node ? '&node='+node : ''}`;
+  const data = await fetchJSON(url);
+  if (!data) return;
+
+  const labels = data.frames.map(f => fmtTime(f.timestamp));
+  const values = data.frames.map(f => f.metrics?.latency_ms || 0);
+  latencyChart.data.labels = labels;
+  latencyChart.data.datasets[0].data = values;
+  latencyChart.update();
+}
+
+async function refresh() {
+  await Promise.all([refreshStats(), refreshAlerts(), refreshCharts()]);
+  document.getElementById('last-update').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+  document.getElementById('status-dot').style.background = '#3fb950';
+}
+
+// Server-Sent Events for live updates
+function connectSSE() {
+  const es = new EventSource(API + '/events');
+  es.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'alerts') refresh();
+  };
+  es.onerror = () => {
+    document.getElementById('status-dot').style.background = '#e3b341';
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// Init
+initCharts();
+refresh();
+connectSSE();
+setInterval(refresh, 5000);  // fallback poll every 5s
+</script>
+</body>
+</html>

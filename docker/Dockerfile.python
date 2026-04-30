@@ -1,0 +1,29 @@
+# Dockerfile.python
+# ------------------
+# Used for: simulator, gRPC server, dashboard API
+
+FROM python:3.11-slim
+
+# Install system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy and install Python dependencies first (layer caching — if requirements.txt
+# doesn't change, Docker reuses the cached layer and skips pip install)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Generate protobuf stubs
+RUN python -m grpc_tools.protoc \
+    -I/app/proto \
+    --python_out=/app/src \
+    --grpc_python_out=/app/src \
+    /app/proto/netwatch.proto || true
+
+RUN mkdir -p /tmp/netwatch
