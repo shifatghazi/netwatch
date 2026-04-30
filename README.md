@@ -49,16 +49,24 @@ core, gRPC API, and live web dashboard.
 
 ## Quick start
 
+### Option 1 — Single file demo (no Docker, no compiler needed)
 ```bash
-# Clone and run the full stack
+git clone https://github.com/shifatghazi/netwatch
+cd netwatch
+python3 demo.py
+```
+Then open **http://localhost:8080** in your browser. After ~30 seconds of baseline warmup, alerts will start firing. Press `Ctrl+C` to stop.
+
+### Option 2 — Full Docker stack (all 4 services as separate containers)
+```bash
 git clone https://github.com/shifatghazi/netwatch
 cd netwatch
 docker compose up --build
+```
+Then open **http://localhost:8080/dashboard/index.html**
 
-# Open the dashboard
-open http://localhost:8080/dashboard/index.html
-
-# Connect to the gRPC API (requires grpcurl)
+### Connect to the gRPC API directly (requires grpcurl)
+```bash
 grpcurl -plaintext localhost:50051 netwatch.NetWatchService/HealthCheck
 grpcurl -plaintext -d '{"min_severity": "MAJOR"}' localhost:50051 netwatch.NetWatchService/StreamAlerts
 ```
